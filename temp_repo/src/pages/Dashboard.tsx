@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { 
   Send, Users, MousePointer2, AlertTriangle, Play,
-  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download, Trash2
+  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download
 } from 'lucide-react';
 // FIX: removed unused "Plus" import
 import { PHISHING_TEMPLATES } from '../constants';
@@ -13,17 +13,11 @@ import { PHISHING_TEMPLATES } from '../constants';
 export default function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  // FIX: added error state for user-facing feedback
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newSim, setNewSim] = useState({ name: '', emails: '', templateIdx: 0 });
   const [activeTab, setActiveTab] = useState('Dashboard');
-  const [toastMessage, setToastMessage] = useState<{message: string, type: 'error' | 'success'} | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
-    setToastMessage({ message, type });
-    setTimeout(() => setToastMessage(null), 5000);
-  };
 
   useEffect(() => {
     fetchStats();
@@ -38,6 +32,7 @@ export default function Dashboard() {
       setStats(data);
     } catch (err: any) {
       console.error("Failed to fetch stats", err);
+      // FIX: show error to the user instead of silently failing
       setFetchError(err.message || "Failed to load dashboard data. Is the server running?");
     } finally {
       setLoading(false);
@@ -56,7 +51,6 @@ export default function Dashboard() {
           simulationId: `sim_${Date.now()}`,
           name: newSim.name,
           targetEmails: emails,
-          templateIdx: newSim.templateIdx,
           template: PHISHING_TEMPLATES[newSim.templateIdx]
         })
       });
@@ -66,9 +60,9 @@ export default function Dashboard() {
         const failures = responseData.results?.filter((r: any) => r.status === 'failed') || [];
         
         if (failures.length > 0) {
-          showToast(`Some or all emails failed to send. Error from mail server: ${failures[0].error}`, 'error');
+          alert(`Some or all emails failed to send. Error from mail server: ${failures[0].error}`);
         } else {
-          showToast(`Successfully launched campaign to ${emails.length} targets!`, 'success');
+          alert(`Successfully launched campaign to ${emails.length} targets!`);
         }
         
         setIsModalOpen(false);
@@ -76,37 +70,18 @@ export default function Dashboard() {
         fetchStats();
       } else {
         const errorData = await simResponse.json();
-        showToast(`Failed to launch protocol: ${errorData.error}`);
+        alert(`Failed to launch protocol: ${errorData.error}`);
       }
     } catch (err) {
       console.error(err);
-      showToast(`Error launching protocol: ${err}`);
+      alert(`Error launching protocol: ${err}`);
     }
   };
 
-  const handleDeleteSimulation = async (id: string, name: string) => {
-    try {
-      const res = await fetch(`/api/simulations/${id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        showToast(`Campaign "${name}" deleted.`, 'success');
-        fetchStats();
-      } else {
-        const errorData = await res.json();
-        showToast(`Failed to delete campaign: ${errorData.error}`);
-      }
-    } catch (err) {
-      console.error(err);
-      showToast(`Error deleting campaign: ${err}`);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
+  // FIX: implement CSV export for risk assessment report
   const handleExportRiskReport = () => {
     if (!stats?.atRisk || stats.atRisk.length === 0) {
-      showToast("No risk data to export.");
+      alert("No risk data to export.");
       return;
     }
     const header = "Email,Click Count\n";
@@ -156,28 +131,7 @@ export default function Dashboard() {
   const riskTrend = avgCtr === 0 ? 'No data yet' : avgCtr > 10 ? 'Attention Required' : 'Within Threshold';
 
   return (
-    <div className="flex h-screen w-full bg-slate-950 font-sans overflow-hidden border-t-4 border-indigo-600 relative">
-      
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="absolute top-4 right-4 z-50">
-          <motion.div 
-            initial={{ opacity: 0, y: -20, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.9 }}
-            className={`px-4 py-3 rounded shadow-lg border ${
-              toastMessage.type === 'error' ? 'bg-rose-950/80 border-rose-500/50 text-rose-200' : 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200'
-            } flex items-center gap-3 backdrop-blur-sm max-w-sm`}
-          >
-            {toastMessage.type === 'error' ? <AlertTriangle size={16} className="text-rose-400" /> : <Shield size={16} className="text-emerald-400" />}
-            <span className="text-sm font-medium leading-tight">{toastMessage.message}</span>
-            <button onClick={() => setToastMessage(null)} className="ml-2 hover:opacity-75">
-              <XCircle size={16} />
-            </button>
-          </motion.div>
-        </div>
-      )}
-
+    <div className="flex h-screen w-full bg-slate-950 font-sans overflow-hidden border-t-4 border-indigo-600">
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0">
         <div className="p-6">
@@ -335,7 +289,6 @@ export default function Dashboard() {
                           <th className="px-6 py-3">User Actions</th>
                           <th className="px-6 py-3">CTR Rate</th>
                           <th className="px-6 py-3 text-right">Status</th>
-                          <th className="px-6 py-3 text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/50">
@@ -360,23 +313,6 @@ export default function Dashboard() {
                               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase tracking-tighter">
                                 Active
                               </span>
-                            </td>
-                            <td className="px-6 py-3 text-right">
-                              {deletingId === sim.id ? (
-                                <div className="flex items-center justify-end gap-2">
-                                  <span className="text-[10px] text-rose-500 font-bold uppercase">Confirm?</span>
-                                  <button onClick={() => handleDeleteSimulation(sim.id, sim.name)} className="text-white bg-rose-600 hover:bg-rose-500 px-2 py-0.5 rounded text-[10px] font-bold">Yes</button>
-                                  <button onClick={() => setDeletingId(null)} className="text-slate-400 hover:text-slate-200 px-2 py-0.5 rounded text-[10px] font-bold">No</button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => setDeletingId(sim.id)}
-                                  className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors"
-                                  title="Delete Campaign"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
                             </td>
                           </tr>
                         ))}

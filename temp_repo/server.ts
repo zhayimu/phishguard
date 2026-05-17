@@ -2,9 +2,8 @@ import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import dotenv from "dotenv";
-import { PHISHING_TEMPLATES } from "./src/constants";
 
 dotenv.config();
 
@@ -18,7 +17,15 @@ const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT || "587"),
+  secure: process.env.SMTP_PORT === "465",
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 app.use(express.json());
 
@@ -56,7 +63,7 @@ function requireApiKey(req: Request, res: Response, next: NextFunction) {
 }
 
 // List Simulations
-app.get("/api/simulations", async (req: Request, res: Response) => {
+app.get("/api/simulations", requireApiKey, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from("simulations")
@@ -70,18 +77,16 @@ app.get("/api/simulations", async (req: Request, res: Response) => {
 });
 
 // Stats for Dashboard
-app.get("/api/stats", async (req: Request, res: Response) => {
+app.get("/api/stats", requireApiKey, async (req: Request, res: Response) => {
   try {
-    const [
-      { data: sims, error: simErr },
-      { data: logs, error: logErr }
-    ] = await Promise.all([
-      supabase.from("simulations").select("id, name, total_sent").order('created_at', { ascending: false }),
-      supabase.from("tracking_logs").select("*")
-    ]);
+    const { data: sims, error: simErr } = await supabase
+      .from("simulations")
+      .select("id, name, total_sent");
+    const { data: logs, error: logErr } = await supabase
+      .from("tracking_logs")
+      .select("*");
 
-    if (simErr) throw simErr;
-    if (logErr) throw logErr;
+    if (simErr || logErr) throw simErr || logErr;
 
     const stats = sims?.map((sim) => {
       const clicks = logs?.filter((log) => log.simulation_id === sim.id).length || 0;
@@ -131,10 +136,7 @@ app.get("/track/:trackingId", async (req: Request, res: Response) => {
       clicked_at: new Date().toISOString(),
     });
 
-    let baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/['"]+/g, '').replace(/\/$/, '') : "";
-    if (!baseUrl) {
-      baseUrl = (req.headers["x-forwarded-proto"] || req.protocol) + "://" + req.get("host");
-    }
+    const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
     res.redirect(`${baseUrl}/education?simId=${simulationId}`);
   } catch (err) {
     console.error("Tracking error:", err);
@@ -143,14 +145,8 @@ app.get("/track/:trackingId", async (req: Request, res: Response) => {
 });
 
 // Send Phishing Email
-app.post("/api/send", sendRateLimiter, async (req: Request, res: Response) => {
-  const { simulationId, targetEmails, templateIdx, name } = req.body;
-
-  // FIX: Fetch template locally on server side rather than taking object from client
-  let template = req.body.template; // fallback to body
-  if (templateIdx !== undefined && PHISHING_TEMPLATES && PHISHING_TEMPLATES[templateIdx]) {
-    template = PHISHING_TEMPLATES[templateIdx];
-  }
+app.post("/api/send", requireApiKey, sendRateLimiter, async (req: Request, res: Response) => {
+  const { simulationId, targetEmails, template, name } = req.body;
 
   // FIX: validate required fields with separate return
   if (!simulationId || !targetEmails || !template) {
@@ -172,43 +168,29 @@ app.post("/api/send", sendRateLimiter, async (req: Request, res: Response) => {
     });
     if (insertError) throw insertError;
 
-    let baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/['"]+/g, '').replace(/\/$/, '') : "";
-    if (!baseUrl) {
-      baseUrl = (req.headers["x-forwarded-proto"] || req.protocol) + "://" + req.get("host");
+    const results = [];
+    const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+
+    for (const email of targetEmails) {
+      try {
+        const trackingId = Buffer.from(`${email}:${simulationId}`).toString("base64");
+        const trackingUrl = `${baseUrl}/track/${trackingId}`;
+
+        // FIX: global regex replaces ALL occurrences of {{TRACKING_LINK}}
+        const html = template.content.replace(/\{\{TRACKING_LINK\}\}/g, trackingUrl);
+
+        await transporter.sendMail({
+          from: `"${template.senderName}" <${process.env.SMTP_USER}>`,
+          to: email,
+          subject: template.subject,
+          html: html,
+        });
+
+        results.push({ email, status: "sent" });
+      } catch (err: any) {
+        results.push({ email, status: "failed", error: err.message });
+      }
     }
-
-    const results = await Promise.all(
-      targetEmails.map(async (email) => {
-        try {
-          const trackingId = Buffer.from(`${email}:${simulationId}`).toString("base64");
-          const trackingUrl = `${baseUrl}/track/${trackingId}`;
-          const html = template.content.replace(/\{\{TRACKING_LINK\}\}/g, trackingUrl);
-
-          let fromEmail = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
-          if (!fromEmail.includes("@")) {
-            fromEmail = "onboarding@resend.dev";
-          }
-          const senderName = template.senderName ? template.senderName.replace(/[<>"]/g, '').trim() : '';
-          const fromStr = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
-
-          const { error } = await resend.emails.send({
-            from: fromStr,
-            to: email,
-            subject: template.subject,
-            html: html,
-            text: `Please view this email in an HTML-compatible client. Link: ${trackingUrl}`,
-          });
-
-          if (error) {
-            throw new Error(error.message);
-          }
-
-          return { email, status: "sent" };
-        } catch (err: any) {
-          return { email, status: "failed", error: err.message };
-        }
-      })
-    );
 
     const sentCount = results.filter((r) => r.status === "sent").length;
     await supabase
@@ -220,19 +202,6 @@ app.post("/api/send", sendRateLimiter, async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("Failed to send simulation:", err);
     res.status(500).json({ error: err?.message || err?.details || JSON.stringify(err) });
-  }
-});
-
-// Delete simulation
-app.delete("/api/simulations/:id", async (req: Request, res: Response) => {
-  const { id } = req.params;
-  try {
-    const { error } = await supabase.from("simulations").delete().eq("id", id);
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (err: any) {
-    console.error("Failed to delete simulation:", err);
-    res.status(500).json({ error: err.message });
   }
 });
 
