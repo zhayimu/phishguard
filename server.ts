@@ -22,6 +22,18 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
 
+app.get("/api/debug-host", (req, res) => {
+  res.json({
+    host: req.get("host"),
+    hostname: req.hostname,
+    protocol: req.protocol,
+    originalUrl: req.originalUrl,
+    xForwardedHost: req.headers["x-forwarded-host"],
+    xForwardedProto: req.headers["x-forwarded-proto"],
+    base: process.env.APP_URL || ""
+  });
+});
+
 // FIX: Simple in-memory rate limiter for /api/send
 const sendRateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -133,7 +145,12 @@ app.get("/track/:trackingId", async (req: Request, res: Response) => {
 
     let baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/['"]+/g, '').replace(/\/$/, '') : "";
     if (!baseUrl) {
-      baseUrl = (req.headers["x-forwarded-proto"] || req.protocol) + "://" + req.get("host");
+      let host = req.get("host") || "";
+      if (host.startsWith("ais-dev-")) {
+        host = host.replace("ais-dev-", "ais-pre-");
+      }
+      const proto = req.headers["x-forwarded-proto"] || req.protocol;
+      baseUrl = proto + "://" + host;
     }
     res.redirect(`${baseUrl}/education?simId=${simulationId}`);
   } catch (err) {
@@ -174,7 +191,12 @@ app.post("/api/send", sendRateLimiter, async (req: Request, res: Response) => {
 
     let baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/['"]+/g, '').replace(/\/$/, '') : "";
     if (!baseUrl) {
-      baseUrl = (req.headers["x-forwarded-proto"] || req.protocol) + "://" + req.get("host");
+      let host = req.get("host") || "";
+      if (host.startsWith("ais-dev-")) {
+        host = host.replace("ais-dev-", "ais-pre-");
+      }
+      const proto = req.headers["x-forwarded-proto"] || req.protocol;
+      baseUrl = proto + "://" + host;
     }
 
     const results = await Promise.all(
@@ -188,8 +210,12 @@ app.post("/api/send", sendRateLimiter, async (req: Request, res: Response) => {
           if (!fromEmail.includes("@")) {
             fromEmail = "onboarding@resend.dev";
           }
-          const senderName = template.senderName ? template.senderName.replace(/[<>"]/g, '').trim() : '';
-          const fromStr = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
+          
+          let fromStr = fromEmail;
+          if (fromEmail !== "onboarding@resend.dev") {
+            const senderName = template.senderName ? template.senderName.replace(/[<>"]/g, '').trim() : '';
+            fromStr = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
+          }
 
           const { error } = await resend.emails.send({
             from: fromStr,
