@@ -5,14 +5,20 @@ import {
 } from 'recharts';
 import { 
   Send, Users, MousePointer2, AlertTriangle, Play,
-  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download, Trash2
+  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download, Trash2, KeyRound
 } from 'lucide-react';
 // FIX: removed unused "Plus" import
 import { PHISHING_TEMPLATES } from '../constants';
+import landingLogoImg from '../assets/images/PHISHGUARD.png';
+import logoImg from '../assets/images/PHISHGUARD (1).png';
 
 export default function Dashboard() {
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  
   const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newSim, setNewSim] = useState({ name: '', emails: '', templateIdx: 0 });
@@ -25,20 +31,66 @@ export default function Dashboard() {
     setTimeout(() => setToastMessage(null), 5000);
   };
 
+  const apiFetch = async (url: string, options: any = {}) => {
+    const token = localStorage.getItem('token');
+    const headers = { ...options.headers };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      localStorage.removeItem('token');
+      setIsLoggedIn(false);
+      throw new Error('Unauthorized');
+    }
+    return res;
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem('token', data.token);
+        setIsLoggedIn(true);
+        fetchStats();
+      } else {
+        setLoginError('Invalid password');
+      }
+    } catch (err) {
+      setLoginError('Server error during login');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setIsLoggedIn(false);
+  };
+
   useEffect(() => {
-    fetchStats();
-  }, []);
+    if (isLoggedIn) {
+      setLoading(true);
+      fetchStats();
+    }
+  }, [isLoggedIn]);
 
   const fetchStats = async () => {
     setFetchError(null);
     try {
-      const res = await fetch('/api/stats');
+      const res = await apiFetch('/api/stats');
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       setStats(data);
     } catch (err: any) {
       console.error("Failed to fetch stats", err);
-      setFetchError(err.message || "Failed to load dashboard data. Is the server running?");
+      // Suppress fetch error if it's just due to being unauthorized
+      if (err.message !== 'Unauthorized') {
+        setFetchError(err.message || "Failed to load dashboard data. Is the server running?");
+      }
     } finally {
       setLoading(false);
     }
@@ -49,7 +101,7 @@ export default function Dashboard() {
     const emails = newSim.emails.split(',').map(e => e.trim()).filter(e => e !== '');
     
     try {
-      const simResponse = await fetch('/api/send', {
+      const simResponse = await apiFetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -80,13 +132,15 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
-      showToast(`Error launching protocol: ${err}`);
+      if (err instanceof Error && err.message !== 'Unauthorized') {
+        showToast(`Error launching protocol: ${err.message}`);
+      }
     }
   };
 
   const handleDeleteSimulation = async (id: string, name: string) => {
     try {
-      const res = await fetch(`/api/simulations/${id}`, {
+      const res = await apiFetch(`/api/simulations/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -98,7 +152,9 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
-      showToast(`Error deleting campaign: ${err}`);
+      if (err instanceof Error && err.message !== 'Unauthorized') {
+        showToast(`Error deleting campaign: ${err}`);
+      }
     } finally {
       setDeletingId(null);
     }
@@ -121,8 +177,50 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
+  if (!isLoggedIn) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950 font-sans px-4 relative overflow-hidden">
+        <div className="absolute inset-0 bg-emerald-900/10 opacity-50 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-emerald-900/20 via-slate-950 to-slate-950"></div>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }} 
+          animate={{ opacity: 1, scale: 1 }} 
+          className="relative z-10 bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-sm"
+        >
+          <div className="flex flex-col flex-1 items-center gap-3 mb-8 text-center">
+            <img src={logoImg} alt="PhishGuard" className="w-56 h-auto object-contain mx-auto" />
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-2">Admin Authentication</p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <KeyRound className="h-4 w-4 text-slate-500" />
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter Passkey"
+                  className="w-full pl-10 pr-4 py-3 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none text-sm font-medium transition-all"
+                  required
+                />
+              </div>
+            </div>
+            {loginError && <p className="text-rose-400 text-[10px] uppercase tracking-widest font-bold text-center">{loginError}</p>}
+            <button
+              type="submit"
+              className="w-full flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-[0.2em] py-3 rounded-lg transition-all shadow-xl shadow-emerald-600/20 mt-2"
+            >
+              Verify Identity
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
+
   if (loading) return (
-    <div className="flex h-screen items-center justify-center bg-slate-950 text-indigo-400 font-mono">
+    <div className="flex h-screen items-center justify-center bg-slate-950 text-emerald-400 font-mono">
       <div className="flex flex-col items-center gap-4">
         <Activity className="animate-pulse" size={48} />
         <span className="tracking-widest uppercase text-xs">Initializing Secure Environment...</span>
@@ -139,7 +237,7 @@ export default function Dashboard() {
         <p className="text-slate-400 text-sm max-w-sm">{fetchError}</p>
         <button
           onClick={() => { setLoading(true); fetchStats(); }}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded uppercase tracking-widest transition-all"
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded uppercase tracking-widest transition-all"
         >
           Retry
         </button>
@@ -156,7 +254,7 @@ export default function Dashboard() {
   const riskTrend = avgCtr === 0 ? 'No data yet' : avgCtr > 10 ? 'Attention Required' : 'Within Threshold';
 
   return (
-    <div className="flex h-screen w-full bg-slate-950 font-sans overflow-hidden border-t-4 border-indigo-600 relative">
+    <div className="flex h-screen w-full bg-slate-950 font-sans overflow-hidden border-t-4 border-emerald-600 relative">
       
       {/* Toast Notification */}
       {toastMessage && (
@@ -182,10 +280,7 @@ export default function Dashboard() {
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0">
         <div className="p-6">
           <div className="flex items-center gap-3 mb-10">
-            <div className="w-9 h-9 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Shield className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-slate-100 font-black tracking-tighter text-xl uppercase italic">PhishGuard</span>
+            <img src={landingLogoImg} alt="PhishGuard" className="w-48 h-auto object-contain" />
           </div>
           <nav className="space-y-1.5">
             {[
@@ -200,7 +295,7 @@ export default function Dashboard() {
                 onClick={() => setActiveTab(item.label)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${
                   activeTab === item.label 
-                    ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 shadow-sm shadow-indigo-500/5' 
+                    ? 'bg-emerald-600/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5' 
                     : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
                 }`}
               >
@@ -210,7 +305,10 @@ export default function Dashboard() {
             ))}
           </nav>
         </div>
-        <div className="mt-auto p-6 border-t border-slate-800">
+        <div className="mt-auto p-6 border-t border-slate-800 space-y-4">
+          <button onClick={handleLogout} className="w-full px-3 py-2 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-rose-400 hover:bg-slate-800/50 rounded transition-colors text-left">
+            Logout Session
+          </button>
           <div className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50">
             <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-2.5">System Status</p>
             <div className="flex items-center gap-2">
@@ -232,7 +330,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-4">
             <button 
               onClick={() => setIsModalOpen(true)}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 border border-indigo-400/20"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black rounded uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/20 border border-emerald-400/20"
             >
               New Simulation
             </button>
@@ -250,7 +348,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 {[
                   // FIX: removed hardcoded "+12% from avg" trend
-                  { label: 'Total Sent', value: totalSent, icon: Send, color: 'text-indigo-400', bg: 'bg-indigo-500/10', trend: `${stats?.simulations?.length || 0} campaigns` },
+                  { label: 'Total Sent', value: totalSent, icon: Send, color: 'text-emerald-400', bg: 'bg-emerald-500/10', trend: `${stats?.simulations?.length || 0} campaigns` },
                   { label: 'Total Clicks', value: totalClicks, icon: MousePointer2, color: 'text-rose-400', bg: 'bg-rose-500/10', trend: `${avgCtr.toFixed(1)}% CTR` },
                   { label: 'Reported', value: 0, icon: Shield, color: 'text-emerald-400', bg: 'bg-emerald-500/10', trend: 'N/A' },
                   // FIX: dynamic risk score derived from actual CTR data
@@ -282,7 +380,7 @@ export default function Dashboard() {
                 <section className="col-span-12 lg:col-span-8 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col">
                   <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                     <h2 className="text-slate-100 font-bold text-xs uppercase tracking-widest flex items-center gap-2">
-                      <Activity size={14} className="text-indigo-500" />
+                      <Activity size={14} className="text-emerald-500" />
                       Interaction Metrics
                     </h2>
                     <div className="flex gap-1">
@@ -347,7 +445,7 @@ export default function Dashboard() {
                             <td className="px-6 py-3">
                               <div className="flex items-center gap-2">
                                 <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-indigo-500 h-full" style={{ width: `${Math.min(sim.ctr, 100)}%` }} />
+                                  <div className="bg-emerald-500 h-full" style={{ width: `${Math.min(sim.ctr, 100)}%` }} />
                                 </div>
                                 <span className={`text-[10px] font-mono font-bold ${
                                   sim.ctr > 15 ? 'text-rose-400' : 'text-emerald-400'
@@ -417,7 +515,7 @@ export default function Dashboard() {
                       {/* FIX: implemented CSV export handler */}
                       <button
                         onClick={handleExportRiskReport}
-                        className="w-full flex items-center justify-center gap-2 text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest"
+                        className="w-full flex items-center justify-center gap-2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-widest"
                       >
                         <Download size={12} />
                         Export Risk Assessment Report
@@ -426,28 +524,28 @@ export default function Dashboard() {
                   </section>
 
                   {/* Education Module Info */}
-                  <section className="bg-indigo-600/5 border border-indigo-500/20 rounded-xl p-5 relative overflow-hidden group">
+                  <section className="bg-emerald-600/5 border border-emerald-500/20 rounded-xl p-5 relative overflow-hidden group">
                      <div className="relative z-10">
                        <h3 className="text-slate-100 font-bold text-sm mb-2 flex items-center gap-2">
-                         <FileText size={16} className="text-indigo-500" />
+                         <FileText size={16} className="text-emerald-500" />
                          Education Feed
                        </h3>
                        <p className="text-xs text-slate-500 leading-relaxed mb-4">
                          All users redirected to the &quot;PhishAware&quot; page are tracked here for remedial training.
                        </p>
                        {/* FIX: removed hardcoded 65% — show actual click count instead */}
-                       <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter">
+                       <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-tighter">
                          {totalClicks} users redirected to training
                        </p>
                      </div>
-                     <BarChart3 className="absolute -right-4 -bottom-4 w-24 h-24 text-indigo-500/5 group-hover:scale-110 transition-transform" />
+                     <BarChart3 className="absolute -right-4 -bottom-4 w-24 h-24 text-emerald-500/5 group-hover:scale-110 transition-transform" />
                   </section>
                 </aside>
               </div>
             </>
           ) : (
              <div className="flex flex-col items-center justify-center h-full text-center">
-               <Shield className="w-16 h-16 text-indigo-500/20 mb-4" />
+               <Shield className="w-16 h-16 text-emerald-500/20 mb-4" />
                <h2 className="text-xl font-bold text-slate-300 tracking-tight">{activeTab}</h2>
                <p className="text-xs text-slate-500 uppercase tracking-widest mt-2">Section Under Development</p>
              </div>
@@ -481,7 +579,7 @@ export default function Dashboard() {
                   type="text" 
                   value={newSim.name}
                   onChange={e => setNewSim({...newSim, name: e.target.value})}
-                  className="w-full px-4 py-2.5 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none text-sm font-medium transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none text-sm font-medium transition-all"
                   placeholder="Q2 SECURITY-DRIVE"
                 />
               </div>
@@ -491,7 +589,7 @@ export default function Dashboard() {
                   required
                   value={newSim.emails}
                   onChange={e => setNewSim({...newSim, emails: e.target.value})}
-                  className="w-full px-4 py-2.5 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none text-sm font-medium h-24 resize-none transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none text-sm font-medium h-24 resize-none transition-all"
                   placeholder="employee@secure-corp.com, other@secure-corp.com"
                 />
               </div>
@@ -505,7 +603,7 @@ export default function Dashboard() {
                       onClick={() => setNewSim({...newSim, templateIdx: idx})}
                       className={`text-left p-3 rounded-lg border transition-all ${
                         newSim.templateIdx === idx 
-                          ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500 shadow-lg shadow-indigo-500/10' 
+                          ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500 shadow-lg shadow-emerald-500/10' 
                           : 'border-slate-800 hover:border-slate-700 bg-slate-950/20'
                       }`}
                     >
@@ -517,7 +615,7 @@ export default function Dashboard() {
               </div>
               <button 
                 type="submit"
-                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase tracking-[0.2em] py-4 rounded-xl transition-all shadow-xl shadow-indigo-600/20 border border-indigo-400/20 mt-4"
+                className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-[0.2em] py-4 rounded-xl transition-all shadow-xl shadow-emerald-600/20 border border-emerald-400/20 mt-4"
               >
                 Launch Protocol
               </button>

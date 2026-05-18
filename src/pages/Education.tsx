@@ -57,7 +57,7 @@ export default function Education() {
           
           <div className="p-10 md:p-14 text-center">
             <p className="text-lg text-slate-300 leading-relaxed max-w-2xl mx-auto mb-10">
-              This was a <span className="text-indigo-400 font-black uppercase tracking-tighter italic mr-1 text-xl">Simulated attack</span>.
+              This was a <span className="text-emerald-400 font-black uppercase tracking-tighter italic mr-1 text-xl">Simulated attack</span>.
               In a real-world scenario, your corporate credentials could have been harvested.
               But don't worry—your station is secure.
             </p>
@@ -88,16 +88,16 @@ export default function Education() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="bg-slate-900 p-6 rounded-xl border border-slate-800 flex gap-5 hover:border-indigo-500/30 transition-all group overflow-hidden relative"
+                className="bg-slate-900 p-6 rounded-xl border border-slate-800 flex gap-5 hover:border-emerald-500/30 transition-all group overflow-hidden relative"
               >
                 <div className="shrink-0 relative z-10">
-                  <div className="p-3 bg-slate-950 border border-slate-800 text-indigo-400 rounded-lg group-hover:text-indigo-300 transition-colors">
+                  <div className="p-3 bg-slate-950 border border-slate-800 text-emerald-400 rounded-lg group-hover:text-emerald-300 transition-colors">
                     <flag.icon size={20} />
                   </div>
                 </div>
                 <div className="relative z-10">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[9px] font-bold text-indigo-500 bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase tracking-tighter">{flag.tag}</span>
+                    <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded uppercase tracking-tighter">{flag.tag}</span>
                     <h3 className="font-bold text-slate-200 text-sm tracking-tight">{flag.title}</h3>
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">{flag.description}</p>
@@ -109,10 +109,10 @@ export default function Education() {
         </div>
 
         {/* Resources */}
-        <section className="bg-indigo-600 rounded-2xl p-10 md:p-14 text-white overflow-hidden relative shadow-2xl shadow-indigo-600/20">
+        <section className="bg-emerald-600 rounded-2xl p-10 md:p-14 text-white overflow-hidden relative shadow-2xl shadow-emerald-600/20">
           <div className="relative z-10 max-w-xl">
             <h2 className="text-3xl font-black mb-4 uppercase tracking-tighter leading-none italic">Armor up your skills.</h2>
-            <p className="text-indigo-100 mb-10 text-lg font-medium opacity-90">
+            <p className="text-emerald-100 mb-10 text-lg font-medium opacity-90">
               Cybersecurity is everyone's responsibility. Boost your defense intuition with our verified intel modules.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

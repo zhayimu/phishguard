@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 import { PHISHING_TEMPLATES } from "./src/constants";
 
 dotenv.config();
@@ -55,17 +56,40 @@ function sendRateLimiter(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// FIX: API key auth middleware — protects all /api routes
-function requireApiKey(req: Request, res: Response, next: NextFunction) {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) return next(); // skip auth if API_KEY not configured
-  const provided = req.headers["x-api-key"];
-  if (provided !== apiKey) {
-    res.status(401).json({ error: "Unauthorized: invalid or missing API key" });
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-key-do-not-use-in-prod";
+const APP_PASSWORD = process.env.APP_PASSWORD || "admin123";
+
+app.post("/api/login", (req: Request, res: Response) => {
+  const { password } = req.body;
+  // FIX: separate res.status().json() and return
+  if (!password || password !== APP_PASSWORD) {
+    res.status(401).json({ error: "Invalid password" });
     return;
   }
-  next();
+  const token = jwt.sign({ role: "admin" }, JWT_SECRET, { expiresIn: "1d" });
+  res.json({ token });
+});
+
+// FIX: token auth middleware — protects all /api routes except login
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.path === "/login" || req.path === "/debug-host") {
+    return next();
+  }
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized: missing or invalid token" });
+    return;
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "Unauthorized: token expired or invalid" });
+  }
 }
+
+app.use("/api", requireAuth);
 
 // List Simulations
 app.get("/api/simulations", async (req: Request, res: Response) => {
@@ -104,17 +128,13 @@ app.get("/api/stats", async (req: Request, res: Response) => {
       };
     });
 
-    const atRisk = logs
-      ?.reduce((acc: any[], log: any) => {
-        if (!acc.find((i) => i.employee_email === log.employee_email)) {
-          acc.push({
-            email: log.employee_email,
-            clicks: logs.filter((l: any) => l.employee_email === log.employee_email).length,
-          });
-        }
-        return acc;
-      }, [])
-      .sort((a: any, b: any) => b.clicks - a.clicks);
+    const atRiskMap = new Map<string, number>();
+    logs?.forEach((log: any) => {
+      atRiskMap.set(log.employee_email, (atRiskMap.get(log.employee_email) || 0) + 1);
+    });
+    const atRisk = Array.from(atRiskMap.entries())
+      .map(([email, clicks]) => ({ email, clicks }))
+      .sort((a, b) => b.clicks - a.clicks);
 
     res.json({ simulations: stats, atRisk });
   } catch (err: any) {
@@ -262,7 +282,12 @@ app.delete("/api/simulations/:id", async (req: Request, res: Response) => {
   }
 });
 
+export default app;
+
 async function startServer() {
+  // Skip starting the server if running in Vercel (Vercel uses the exported app as a serverless function)
+  if (process.env.VERCEL) return;
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

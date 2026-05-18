@@ -13,6 +13,6 @@
 
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-300 antialiased selection:bg-indigo-500/30;
+    @apply bg-slate-950 text-slate-300 antialiased selection:bg-emerald-500/30;
   }
 }
