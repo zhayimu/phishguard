@@ -5,8 +5,22 @@ import {
 } from 'recharts';
 import { 
   Send, Users, MousePointer2, AlertTriangle, Play,
-  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download, Trash2, KeyRound
+  XCircle, Info, Shield, LayoutDashboard, FileText, BarChart3, Activity, Download, Trash2, KeyRound, Map, X
 } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+const customIcon = new L.Icon({
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
 // FIX: removed unused "Plus" import
 import { PHISHING_TEMPLATES } from '../constants';
 import landingLogoImg from '../assets/images/PHISHGUARD.png';
@@ -25,6 +39,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [toastMessage, setToastMessage] = useState<{message: string, type: 'error' | 'success'} | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [mapView, setMapView] = useState<{lat: number, lon: number, email: string} | null>(null);
 
   const showToast = (message: string, type: 'error' | 'success' = 'error') => {
     setToastMessage({ message, type });
@@ -75,20 +90,25 @@ export default function Dashboard() {
     if (isLoggedIn) {
       setLoading(true);
       fetchStats();
+
+      // Poll every 5 seconds for real-time location and click updates
+      const interval = setInterval(() => {
+         fetchStats(false); // pass flag to avoid loading screen flicker
+      }, 5000);
+      return () => clearInterval(interval);
     }
   }, [isLoggedIn]);
 
-  const fetchStats = async () => {
-    setFetchError(null);
+  const fetchStats = async (showLoading = true) => {
+    if (showLoading) setFetchError(null);
     try {
-      const res = await apiFetch('/api/stats');
+      const res = await apiFetch(`/api/stats?t=${Date.now()}`);
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       setStats(data);
     } catch (err: any) {
-      console.error("Failed to fetch stats", err);
-      // Suppress fetch error if it's just due to being unauthorized
       if (err.message !== 'Unauthorized') {
+        console.error("Failed to fetch stats", err);
         setFetchError(err.message || "Failed to load dashboard data. Is the server running?");
       }
     } finally {
@@ -289,6 +309,7 @@ export default function Dashboard() {
               { icon: FileText, label: 'Templates' },
               { icon: Users, label: 'Employees' },
               { icon: BarChart3, label: 'Analytics' },
+              { icon: Map, label: 'Live Map' },
             ].map((item) => (
               <button 
                 key={item.label}
@@ -373,6 +394,69 @@ export default function Dashboard() {
                     </div>
                   </motion.div>
                 ))}
+              </div>
+
+              <div className="grid grid-cols-12 gap-6 mb-6">
+                {/* Detailed Logs Section */}
+                <section className="col-span-12 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                    <h2 className="text-slate-100 font-bold text-xs uppercase tracking-widest flex items-center gap-2">
+                      <Activity size={14} className="text-emerald-500" />
+                      Live Event Stream (Click & Location History)
+                    </h2>
+                  </div>
+                  <div className="overflow-x-auto max-h-[400px]">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-950 text-slate-500 text-[9px] uppercase font-bold tracking-widest border-b border-slate-800 sticky top-0 z-10">
+                        <tr>
+                          <th className="px-6 py-3">Timestamp</th>
+                          <th className="px-6 py-3">Target Email</th>
+                          <th className="px-6 py-3">IP Address</th>
+                          <th className="px-6 py-3">Device / Location Data</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50">
+                        {stats?.recentLogs?.map((log: any) => (
+                          <tr key={log.id} className="hover:bg-slate-800/30 transition-colors group">
+                            <td className="px-6 py-3 text-mono text-slate-500 text-xs whitespace-nowrap">
+                              {new Date(log.clicked_at).toLocaleString()}
+                            </td>
+                            <td className="px-6 py-3 font-semibold text-rose-400 text-xs">{log.employee_email}</td>
+                            <td className="px-6 py-3 text-mono text-slate-400 text-xs">{log.ip}</td>
+                            <td className="px-6 py-3 text-xs text-slate-400 max-w-md truncate">
+                              {log.user_agent?.includes('| Location:') ? (
+                                <>
+                                  {log.user_agent.split('| Location: ')[0]} 
+                                  <button 
+                                    onClick={() => {
+                                      const locStr = log.user_agent.split('| Location: ')[1].trim();
+                                      const [lat, lon] = locStr.split(',').map(Number);
+                                      if (!isNaN(lat) && !isNaN(lon)) {
+                                          setMapView({ lat, lon, email: log.employee_email });
+                                      }
+                                    }}
+                                    className="ml-2 inline-flex items-center text-emerald-400 hover:text-emerald-300 gap-1 bg-emerald-500/10 px-2 py-0.5 rounded uppercase tracking-widest text-[9px] font-bold transition-colors cursor-pointer border border-emerald-500/20"
+                                  >
+                                    <Map size={10} /> View Map
+                                  </button>
+                                </>
+                              ) : (
+                                log.user_agent
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {(!stats?.recentLogs || stats.recentLogs.length === 0) && (
+                          <tr>
+                            <td colSpan={4} className="px-6 py-8 text-center text-slate-500 text-xs uppercase tracking-widest font-bold">
+                              No interaction logs recorded yet
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
 
               <div className="grid grid-cols-12 gap-6">
@@ -543,6 +627,61 @@ export default function Dashboard() {
                 </aside>
               </div>
             </>
+          ) : activeTab === 'Live Map' ? (
+             <div className="flex-1 w-full h-[calc(100vh-120px)] relative border border-slate-800 rounded-xl overflow-hidden bg-slate-900 shadow-xl">
+                 <div className="absolute top-4 left-4 z-[400] bg-slate-950/80 backdrop-blur border border-emerald-500/30 px-4 py-2 rounded-lg text-xs tracking-widest font-bold uppercase text-slate-200">
+                    Live Geolocation Tracking
+                 </div>
+                 {(() => {
+                   const logsWithLocation = stats?.recentLogs?.filter((l: any) => l.user_agent?.includes('| Location:')) || [];
+                   if (logsWithLocation.length === 0) {
+                     return (
+                       <div className="flex flex-col items-center justify-center h-full text-center">
+                         <Map className="w-16 h-16 text-slate-700 mb-4" />
+                         <h2 className="text-xl font-bold text-slate-300 tracking-tight">No Location Data</h2>
+                         <p className="text-xs text-slate-500 uppercase tracking-widest mt-2">Waiting for interaction logs...</p>
+                       </div>
+                     );
+                   }
+                   
+                   // Center on the most recent log
+                   const latestLog = logsWithLocation[0];
+                   const latestLocStr = latestLog.user_agent.split('| Location: ')[1].trim();
+                   const [centerLat, centerLon] = latestLocStr.split(',').map(Number);
+                   
+                   const uniqueLogsMap = new window.Map();
+                   logsWithLocation.forEach((log: any) => {
+                      if (!uniqueLogsMap.has(log.employee_email)) {
+                         uniqueLogsMap.set(log.employee_email, log);
+                      }
+                   });
+                   const uniqueLogs = Array.from(uniqueLogsMap.values());
+
+                   return (
+                      <MapContainer center={[centerLat, centerLon]} zoom={3} className="w-full h-full absolute inset-0 z-0">
+                        <TileLayer
+                          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        />
+                        {uniqueLogs.map((log: any) => {
+                          const locStr = log.user_agent.split('| Location: ')[1].trim();
+                          const [lat, lon] = locStr.split(',').map(Number);
+                          if (isNaN(lat) || isNaN(lon)) return null;
+                          return (
+                            <Marker key={log.employee_email} position={[lat, lon]} icon={customIcon}>
+                              <Popup>
+                                <div className="font-mono text-xs uppercase tracking-tight text-center">
+                                  <strong className="text-emerald-600 font-bold">{log.employee_email}</strong><br/>
+                                  <span className="text-slate-500">{new Date(log.clicked_at).toLocaleString()}</span><br/>
+                                </div>
+                              </Popup>
+                            </Marker>
+                          );
+                        })}
+                      </MapContainer>
+                   );
+                 })()}
+             </div>
           ) : (
              <div className="flex flex-col items-center justify-center h-full text-center">
                <Shield className="w-16 h-16 text-emerald-500/20 mb-4" />
@@ -621,6 +760,39 @@ export default function Dashboard() {
               </button>
             </form>
           </motion.div>
+        </div>
+      )}
+      {/* Interactive Map Modal */}
+      {mapView && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 backdrop-blur-md p-4 lg:p-8">
+            <div className="flex flex-col w-full h-full max-w-6xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/80 shrink-0">
+                  <h3 className="text-slate-100 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                    <Map size={16} className="text-emerald-500" />
+                    Tracking Coordinate Signature: <span className="text-emerald-400 lowercase border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 rounded">{mapView.email}</span>
+                  </h3>
+                  <button onClick={() => setMapView(null)} className="text-slate-500 hover:text-rose-400 transition-colors p-2 rounded hover:bg-slate-800">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="flex-1 w-full relative bg-slate-950">
+                    <MapContainer key={`modal-${mapView.lat}-${mapView.lon}`} center={[mapView.lat, mapView.lon]} zoom={15} className="w-full h-full absolute inset-0">
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      />
+                      <Marker position={[mapView.lat, mapView.lon]} icon={customIcon}>
+                        <Popup>
+                          <div className="font-mono text-xs uppercase tracking-tight text-center">
+                            <strong className="text-emerald-600 font-bold">{mapView.email}</strong><br/>
+                            <span className="text-slate-500">Lat: {mapView.lat}</span><br/>
+                            <span className="text-slate-500">Lon: {mapView.lon}</span>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    </MapContainer>
+                </div>
+            </div>
         </div>
       )}
     </div>

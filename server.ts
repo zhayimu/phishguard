@@ -72,7 +72,7 @@ app.post("/api/login", (req: Request, res: Response) => {
 
 // FIX: token auth middleware — protects all /api routes except login
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.path === "/login" || req.path === "/debug-host") {
+  if (req.path === "/login" || req.path === "/debug-host" || req.path === "/location") {
     return next();
   }
   const authHeader = req.headers.authorization;
@@ -113,7 +113,7 @@ app.get("/api/stats", async (req: Request, res: Response) => {
       { data: logs, error: logErr }
     ] = await Promise.all([
       supabase.from("simulations").select("id, name, total_sent").order('created_at', { ascending: false }),
-      supabase.from("tracking_logs").select("*")
+      supabase.from("tracking_logs").select("*").order('clicked_at', { ascending: false })
     ]);
 
     if (simErr) throw simErr;
@@ -136,7 +136,7 @@ app.get("/api/stats", async (req: Request, res: Response) => {
       .map(([email, clicks]) => ({ email, clicks }))
       .sort((a, b) => b.clicks - a.clicks);
 
-    res.json({ simulations: stats, atRisk });
+    res.json({ simulations: stats, atRisk, recentLogs: logs || [] });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -155,13 +155,35 @@ app.get("/track/:trackingId", async (req: Request, res: Response) => {
       return;
     }
 
-    await supabase.from("tracking_logs").insert({
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const realIp = req.headers['x-real-ip'];
+    let clientIp = req.ip || "";
+    if (forwardedFor) {
+      clientIp = typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : forwardedFor[0];
+    } else if (realIp) {
+      clientIp = typeof realIp === 'string' ? realIp : realIp[0];
+    }
+
+    let userAgent = req.headers["user-agent"] || "";
+
+    // Try to get geolocation from IP
+    try {
+      const geoRes = await fetch(`http://ip-api.com/json/${clientIp}?fields=status,lat,lon`);
+      const geoData = await geoRes.json();
+      if (geoData && geoData.status === 'success') {
+        userAgent += ` | Location: ${geoData.lat},${geoData.lon}`;
+      }
+    } catch (e) {
+      console.error("IP Geolocation failed:", e);
+    }
+
+    const { data: insertedData } = await supabase.from("tracking_logs").insert({
       employee_email: employeeEmail,
       simulation_id: simulationId,
-      user_agent: req.headers["user-agent"],
-      ip: req.ip,
+      user_agent: userAgent,
+      ip: clientIp,
       clicked_at: new Date().toISOString(),
-    });
+    }).select("id").single();
 
     let baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/['"]+/g, '').replace(/\/$/, '') : "";
     if (!baseUrl) {
@@ -172,10 +194,37 @@ app.get("/track/:trackingId", async (req: Request, res: Response) => {
       const proto = req.headers["x-forwarded-proto"] || req.protocol;
       baseUrl = proto + "://" + host;
     }
-    res.redirect(`${baseUrl}/education?simId=${simulationId}`);
+    const logIdParams = insertedData ? `&logId=${insertedData.id}` : "";
+    res.redirect(`${baseUrl}/education?simId=${simulationId}${logIdParams}`);
   } catch (err) {
     console.error("Tracking error:", err);
     res.redirect("/education?error=tracking_failed");
+  }
+});
+
+// Endpoint to store exact client location
+app.post("/api/location", async (req: Request, res: Response) => {
+  try {
+    const { logId, lat, lon } = req.body;
+    console.log("Received location:", { logId, lat, lon });
+    if (!logId || !lat || !lon) {
+      res.status(400).json({ error: "Missing parameters" });
+      return;
+    }
+    const { data: existing } = await supabase.from("tracking_logs").select("user_agent").eq("id", logId).single();
+    if (existing) {
+      let baseUserAgent = existing.user_agent || '';
+      if (baseUserAgent.includes('| Location:')) {
+        baseUserAgent = baseUserAgent.split('| Location:')[0].trim();
+      }
+      const newUserAgent = `${baseUserAgent} | Location: ${lat},${lon}`;
+      await supabase.from("tracking_logs").update({ user_agent: newUserAgent }).eq("id", logId);
+      console.log("Updated log with location successfully");
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Location update error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
